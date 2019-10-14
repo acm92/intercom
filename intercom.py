@@ -39,9 +39,9 @@ class Intercom:
             print("destination_port={}".format(self.destination_port))
 
         if self.bytes_per_sample == 1:
-            self.dtype = numpy.int16
+            self.dtype = numpy.int8
         elif self.bytes_per_sample == 2:
-            self.dtype = numpy.int32
+            self.dtype = numpy.int16
 
         self.bytes_per_chunk = self.samples_per_chunk * self.number_of_channels * self.bytes_per_sample
         print("bytes_per_chunk={}".format(self.bytes_per_chunk))
@@ -65,7 +65,7 @@ class Intercom:
                 message = q.get_nowait()
             except queue.Empty:
                 message = numpy.zeros((self.samples_per_chunk, self.number_of_channels), self.dtype)
-            outdata[:] = numpy.frombuffer(message, numpy.int32).reshape(self.samples_per_chunk, self.number_of_channels)
+            outdata[:] = numpy.frombuffer(message, numpy.int16).reshape(self.samples_per_chunk, self.number_of_channels)
             if __debug__:
                 sys.stderr.write("."); sys.stderr.flush()
 
