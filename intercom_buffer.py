@@ -1,9 +1,8 @@
-import sounddevice as sd                                                        # https://python-sounddevice.readthedocs.io
-import numpy                                                                    # https://numpy.org/
-import argparse                                                                 # https://docs.python.org/3/library/argparse.html
-import socket                                                                   # https://docs.python.org/3/library/socket.html
-import queue     
+# Adding a buffer.
 
+import sounddevice as sd
+import numpy as np
+import struct
 from intercom import Intercom
 
 if __debug__:
@@ -11,52 +10,50 @@ if __debug__:
 
 class Intercom_buffer(Intercom):
 
+    MAX_CHUNK_NUMBER = 65536
+
     def init(self, args):
         Intercom.init(self, args)
+        self.chunks_to_buffer = args.chunks_to_buffer
+        self.cells_in_buffer = self.chunks_to_buffer * 2
+        self._buffer = [self.generate_zero_chunk()] * self.cells_in_buffer
+        self.packet_format = f"H{self.samples_per_chunk}h"
+        if __debug__:
+            print(f"chunks_to_buffer={self.chunks_to_buffer}")
 
     def run(self):
-        sending_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        receiving_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        listening_endpoint = ("0.0.0.0", self.listening_port)
-        receiving_sock.bind(listening_endpoint)
 
-        l = list()  #We use list instead of a Queue, in order to perform the sort() method. 
+        self.recorded_chunk_number = 0
+        self.played_chunk_number = 0
 
         def receive_and_buffer():
-            message, source_address = receiving_sock.recvfrom(Intercom.max_packet_size)
-            l.append(message)     #The element is indexed at the end of the list
-            l.sort(reverse=True)        #We sort the list in descending order 
-            
+            message, source_address = self.receiving_sock.recvfrom(Intercom.MAX_MESSAGE_SIZE)
+            chunk_number, *chunk = struct.unpack(self.packet_format, message)
+            self._buffer[chunk_number % self.cells_in_buffer] = np.asarray(chunk).reshape(self.frames_per_chunk, self.number_of_channels)
+            return chunk_number
+
         def record_send_and_play(indata, outdata, frames, time, status):
-            sending_sock.sendto(indata, (self.destination_IP_addr, self.destination_port))
-            try:
-                message = l[-1]         #We extract the last element of the list
-            except IndexError:          #If the list is empty
-                message = numpy.zeros((self.samples_per_chunk, self.number_of_channels), self.dtype)
-            outdata[:] = numpy.frombuffer(message, numpy.int32).reshape(self.samples_per_chunk, self.number_of_channels)
+            message = struct.pack(self.packet_format, self.recorded_chunk_number, *(indata.flatten()))
+            self.recorded_chunk_number = (self.recorded_chunk_number + 1) % self.MAX_CHUNK_NUMBER
+            self.sending_sock.sendto(message, (self.destination_IP_addr, self.destination_port))
+            chunk = self._buffer[self.played_chunk_number % self.cells_in_buffer]
+            self._buffer[self.played_chunk_number % self.cells_in_buffer] = self.generate_zero_chunk()
+            self.played_chunk_number = (self.played_chunk_number + 1) % self.cells_in_buffer
+            outdata[:] = chunk
             if __debug__:
                 sys.stderr.write("."); sys.stderr.flush()
 
-        with sd.Stream(samplerate=self.samples_per_second, blocksize=self.samples_per_chunk, dtype=self.dtype, channels=self.number_of_channels, callback=record_send_and_play):
-            print('-=- Press <CTRL> + <C> to quit -=-')
+        with sd.Stream(samplerate=self.frames_per_second, blocksize=self.frames_per_chunk, dtype=np.int16, channels=self.number_of_channels, callback=record_send_and_play):
+            print("-=- Press CTRL + c to quit -=-")
+            first_received_chunk_number = receive_and_buffer()
+            self.played_chunk_number = (first_received_chunk_number - self.chunks_to_buffer) % self.cells_in_buffer
             while True:
                 receive_and_buffer()
 
-
     def add_args(self):
-        parser = argparse.ArgumentParser(description="Real-time intercom", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-        parser.add_argument("-s", "--samples_per_chunk", help="Samples per chunk.", type=int, default=1024)
-        parser.add_argument("-r", "--samples_per_second", help="Sampling rate in samples/second.", type=int, default=44100)
-        parser.add_argument("-c", "--number_of_channels", help="Number of channels.", type=int, default=2)
-        parser.add_argument("-b", "--bytes_per_sample", help="Depth in bytes of the samples of audio.", type=int, default=2)
-        parser.add_argument("-p", "--mlp", help="My listening port.", type=int, default=4444)
-        parser.add_argument("-i", "--ilp", help="Interlocutor's listening port.", type=int, default=4444)
-        parser.add_argument("-a", "--ia", help="Interlocutor's IP address or name.", type=str, default="localhost")
+        parser = Intercom.add_args(self)
+        parser.add_argument("-cb", "--chunks_to_buffer", help="Number of chunks to buffer", type=int, default=32)
         return parser
-
-    #def add_args(self):
-    #   parser = Intercom.add_args(self)
-    
 
 if __name__ == "__main__":
     intercom = Intercom_buffer()
