@@ -25,12 +25,7 @@ class Intercom_bitplanes(Intercom_buffer):
             #Same as intercom_buffer but adding the most significant column with an "or" operation,
             #in order to place right the column of most significant bits.
             #The operation is repeated as many columns and channels there are.
-            
-            #For instance, if we have 16 columns for each channel, we would have to do an "or" operation
-            #of said 16 columns (stored in variable "significantCol") and pack them in a package; 
-            #and we proceed to the next channel and its 16 columns.
-
-
+        
             message, source_address = self.receiving_sock.recvfrom(Intercom.MAX_MESSAGE_SIZE)
             chunk_number, significantCol, channelNum, *bitplane = struct.unpack(self.packet_format, message)
                   
@@ -50,9 +45,11 @@ class Intercom_bitplanes(Intercom_buffer):
                 #of that significantCol position. For instance, having bitplane 15, for each channel in that 15th position
                 #we store the indata of that 15th column.
                 bitArray = (indata & (1 << significantCol)) >> significantCol
+                #print(indata)
 
                 for channelNum in range(self.number_of_channels): 
                     channelArray = bitArray[:, channelNum]
+                    
                     int8 = channelArray.astype(np.uint8)   #channel conversion to 8bit integer
                     channelpack8 = np.packbits(int8)       #packing
                     message = struct.pack(self.packet_format, self.recorded_chunk_number, significantCol, channelNum, *channelpack8)
@@ -63,6 +60,7 @@ class Intercom_bitplanes(Intercom_buffer):
             self._buffer[self.played_chunk_number % self.cells_in_buffer] = self.generate_zero_chunk()
             self.played_chunk_number = (self.played_chunk_number + 1) % self.cells_in_buffer
             outdata[:] = chunk
+            #print(outdata)
             
             if __debug__:
                 sys.stderr.write("."); sys.stderr.flush()
